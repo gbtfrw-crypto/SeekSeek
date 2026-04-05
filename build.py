@@ -34,10 +34,58 @@ def run(cmd: list[str], **kwargs):
         sys.exit(result.returncode)
 
 
+# ── 빌드 후 제거할 불필요 파일/폴더 ──────────────────────────────────────────
+# Qt 이미지 포맷 플러그인 (ico/svg만 필요)
+_REMOVE_QT_IMAGE_PLUGINS = {
+    "qjpeg.dll", "qwebp.dll", "qtiff.dll", "qicns.dll",
+    "qgif.dll", "qwbmp.dll", "qtga.dll", "qpdf.dll",
+}
+# 불필요 DLL/플러그인
+_REMOVE_FILES = {
+    "Qt6Pdf.dll",           # PyMuPDF 자체 PDF 엔진 사용
+    "libssl-3.dll",         # 오프라인 앱, SSL 불필요
+    "libcrypto-3.dll",      # crypto 불필요
+    "qtuiotouchplugin.dll", # 터치 입력 불필요
+    "qoffscreen.dll",       # 오프스크린 렌더 불필요
+    "qminimal.dll",         # 최소 플랫폼 드라이버 불필요
+    "_ssl.pyd",             # Python SSL 모듈
+}
+# 통째로 제거할 폴더
+_REMOVE_DIRS = [
+    os.path.join("_internal", "PIL"),
+    os.path.join("_internal", "lxml", "html"),
+    os.path.join("_internal", "lxml", "sax.cp311-win_amd64.pyd"),
+]
+
+
+def strip_bloat():
+    """빌드 결과에서 불필요한 파일/폴더를 제거해 용량을 줄인다."""
+    removed = 0
+    for dirpath, dirnames, filenames in os.walk(BUILD_DIR):
+        for fname in filenames:
+            if fname in _REMOVE_QT_IMAGE_PLUGINS or fname in _REMOVE_FILES:
+                fpath = os.path.join(dirpath, fname)
+                os.remove(fpath)
+                print(f"  제거: {os.path.relpath(fpath, BUILD_DIR)}")
+                removed += 1
+    for rel in _REMOVE_DIRS:
+        target = os.path.join(BUILD_DIR, rel)
+        if os.path.isdir(target):
+            shutil.rmtree(target)
+            print(f"  제거 (폴더): {rel}")
+            removed += 1
+    print(f"✅ 불필요 파일 {removed}개 제거 완료")
+
+
 def build_exe():
-    """PyInstaller로 단일 폴더 빌드."""
+    """PyInstaller로 단일 폴더 빌드 후 불필요 파일 제거."""
     run([PYINSTALLER, "--clean", "--noconfirm", "seekseek.spec"], cwd=ROOT)
-    print(f"✅ EXE 빌드 완료 → {BUILD_DIR}")
+    strip_bloat()
+    size_mb = sum(
+        os.path.getsize(os.path.join(dp, f))
+        for dp, _, fs in os.walk(BUILD_DIR) for f in fs
+    ) / 1024 / 1024
+    print(f"✅ EXE 빌드 완료 → {BUILD_DIR} ({size_mb:.0f} MB)")
 
 
 def build_portable():

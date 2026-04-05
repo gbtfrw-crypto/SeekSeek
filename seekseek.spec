@@ -33,7 +33,22 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'unittest', 'email', 'http', 'urllib', 'xmlrpc'],
+    excludes=[
+        'tkinter',
+        # Pillow — 앱에서 미사용 (PyMuPDF가 간접 의존하지만 직접 사용 안 함)
+        'PIL', 'PIL._avif', 'PIL._webp', 'PIL._imaging',
+        'PIL._imagingcms', 'PIL._imagingft', 'PIL._imagingmorph',
+        # 과학/데이터 라이브러리
+        'matplotlib', 'numpy', 'pandas', 'scipy', 'IPython',
+        # 네트워크/보안 (오프라인 앱)
+        'cryptography', 'ssl', '_ssl',
+        # lxml HTML 파싱 (pptx용 etree만 필요)
+        'lxml.html', 'lxml.html._difflib', 'lxml.html.diff',
+        'lxml.sax',
+        # 기타 불필요
+        'xmlrpc', 'email', 'http', 'ftplib', 'imaplib',
+        'unittest', 'doctest', 'pdb', 'profile', 'pstats',
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -51,7 +66,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,              # UPX 미설치 시 False, 설치 후 True로 변경
     console=False,          # 콘솔 창 숨김
     disable_windowed_traceback=False,
     target_arch=None,
@@ -67,7 +82,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='SeekSeek',
 )
