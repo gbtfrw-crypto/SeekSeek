@@ -27,7 +27,7 @@ ISCC_CANDIDATES = [
 
 
 def run(cmd: list[str], **kwargs):
-    print(f"\n▶ {' '.join(cmd)}")
+    print(f"\n>> {' '.join(cmd)}", flush=True)
     result = subprocess.run(cmd, **kwargs)
     if result.returncode != 0:
         print(f"❌ 명령 실패 (exit {result.returncode})")
