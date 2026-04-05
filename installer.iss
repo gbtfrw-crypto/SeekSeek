@@ -46,7 +46,6 @@ Name: "{group}\{#MyAppName} 제거"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{#MyAppName} 시작"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallDelete]
 ; 앱 데이터는 유지 (사용자 설정·인덱스 보존)
