@@ -1,0 +1,36 @@
+# Python
+
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# 빌드 결과물
+dist/
+build/
+*.spec.bak
+
+# 로그 & 임시
+debug.log
+*.log
+
+# DB (로컬 인덱스)
+*.db
+*.db-wal
+*.db-shm
+
+# 테스트 스크립트
+_admin_test.py
+
+# IDE
+.vscode/
+.claude
+.idea/
+*.suo
+*.user
+
+# OS
+Thumbs.db
+desktop.ini

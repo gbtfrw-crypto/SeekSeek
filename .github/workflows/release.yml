@@ -1,0 +1,60 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .venv\Scripts\pip install -r requirements.txt pyinstaller
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Patch version in build.py
+        shell: bash
+        run: sed -i "s/^VERSION = .*/VERSION = \"${{ steps.version.outputs.VERSION }}\"/" build.py
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build (EXE + Portable ZIP + Installer)
+        run: .venv\Scripts\python build.py
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: SeekSeek v${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            dist/SeekSeek-${{ steps.version.outputs.VERSION }}-Setup.exe
+            dist/SeekSeek-${{ steps.version.outputs.VERSION }}-Portable.zip
+          body: |
+            ## SeekSeek v${{ steps.version.outputs.VERSION }}
+
+            ### 설치 방법
+            - **인스톨러** (`*-Setup.exe`): 실행 후 안내에 따라 설치
+            - **포터블** (`*-Portable.zip`): 압축 해제 후 `SeekSeek.exe` 실행
+
+            > 관리자 권한이 필요합니다 (MFT 스캔).
