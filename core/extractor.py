@@ -25,6 +25,11 @@ import xml.etree.ElementTree as ET
 
 import config
 
+try:
+    from pptx import Presentation
+except ImportError:
+    Presentation = None
+
 logger = logging.getLogger(__name__)
 
 # ── HWP 바이너리 파싱 상수 ────────────────────────────────────────────────────
@@ -141,9 +146,7 @@ def _extract_xlsx(filepath: str) -> str | None:
 
 def _extract_pptx(filepath: str) -> str | None:
     """python-pptx로 추출하고, 실패하면 ZIP 직접 파싱으로 폴백한다."""
-    try:
-        from pptx import Presentation
-    except ImportError:
+    if Presentation is None:
         logger.warning("python-pptx 미설치 — PPTX 내용 인덱싱 건너뜀")
         return None
     try:

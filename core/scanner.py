@@ -39,8 +39,7 @@ from functools import partial
 from PyQt6.QtCore import QThread, pyqtSignal
  
 import config
-from core.indexer import (get_connection, upsert_file, upsert_content,
-                          needs_content_update,
+from core.indexer import (get_connection, bulk_upsert_files, bulk_upsert_contents,
                           save_usn_state, load_usn_state, load_file_cache_usn)
 from core.extractor import extract_text
 from core import mft_cache
@@ -50,8 +49,8 @@ from core.mft_scanner import (get_ntfs_drives, enumerate_mft,
 
 logger = logging.getLogger(__name__)
 
-# 배치 커밋 간격 (파일 N개마다 conn.commit())
-_COMMIT_INTERVAL_MFT = 2000
+# 배치 처리 크기 (청크 단위 색인, SQLite 변수 제한 999 이하)
+_BATCH_SIZE = 999
 
 
 def _load_excluded_paths_normalized() -> set[str]:
@@ -539,58 +538,90 @@ class ContentReindexThread(QThread):
     def run(self):
         paths = self._paths
         self.total_count.emit(len(paths))
-        indexed = 0
-        max_workers = min(os.cpu_count() or 4, 8)
+        indexed   = 0
+        processed = 0
+        cpu = os.cpu_count() or 4
+        max_workers = max(4, min(cpu, 12))
 
-        # 1단계: DB 체크 — has_content + mtime 비교로 추출 필요한 파일만 추림
-        paths_to_extract: list[str] = []
-        try:
-            with get_connection() as conn:
-                for path in paths:
-                    if needs_content_update(conn, path):
-                        paths_to_extract.append(path)
-        except Exception:
-            logger.exception("ContentReindexThread 체크 단계 예외")
-            paths_to_extract = list(paths)
+        logger.info("[reindex] 시작: 전체 %d개, workers=%d", len(paths), max_workers)
 
-        logger.info("[reindex] 색인 대상 %d / %d개", len(paths_to_extract), len(paths))
-        for p in paths_to_extract:
-            logger.debug("[reindex]  %s", p)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            # 1000개 청크 단위로 체크→추출→벌크쓰기 반복
+            for chunk_start in range(0, len(paths), _BATCH_SIZE):
+                chunk = paths[chunk_start: chunk_start + _BATCH_SIZE]
 
-        # 2단계: 병렬 텍스트 추출 (필요한 파일만)
-        results: list[tuple[str, str | None]] = []
-        try:
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                future_map = {pool.submit(_extract_for_path, p): p
-                              for p in paths_to_extract}
-                for i, fut in enumerate(as_completed(future_map)):
-                    path = future_map[fut]
-                    self.progress.emit(path, i + 1)
+                # ── 1단계: 배치 DB 체크 (IN절 1번 쿼리) ──────────────────────
+                try:
+                    with get_connection() as conn:
+                        placeholders = ",".join("?" * len(chunk))
+                        rows = conn.execute(
+                            f"SELECT path, modified, has_content FROM files"
+                            f" WHERE path IN ({placeholders})", chunk
+                        ).fetchall()
+                    existing = {r[0]: (r[1], r[2]) for r in rows}
+                except Exception:
+                    logger.exception("[reindex] 체크 단계 예외 (chunk %d)", chunk_start)
+                    existing = {}
+
+                needs_extract: list[str] = []
+                for path in chunk:
                     try:
-                        text = fut.result()
-                    except Exception:
-                        text = None
-                    results.append((path, text))
-        except Exception:
-            logger.exception("ContentReindexThread 추출 단계 예외")
+                        mtime = os.stat(path).st_mtime
+                    except OSError:
+                        continue
+                    if path not in existing:
+                        needs_extract.append(path)
+                    else:
+                        old_mtime, has_content = existing[path]
+                        if not has_content or abs(old_mtime - mtime) >= 0.001:
+                            needs_extract.append(path)
 
-        # 3단계: DB 쓰기 (순차)
-        try:
-            with get_connection() as conn:
-                for i, (path, text) in enumerate(results):
-                    try:
-                        file_id = upsert_file(conn, path)
-                        if file_id is not None and text:
-                            upsert_content(conn, file_id, text)
-                            indexed += 1
-                    except Exception:
-                        logger.exception("ContentReindexThread 개별 파일 DB 쓰기 실패: %s", path)
-                    if (i + 1) % _COMMIT_INTERVAL_MFT == 0:
+                logger.info("[reindex] 청크 %d~%d: 추출 대상 %d / %d개",
+                            chunk_start, chunk_start + len(chunk),
+                            len(needs_extract), len(chunk))
+
+                if not needs_extract:
+                    processed += len(chunk)
+                    continue
+
+                # ── 2단계: 병렬 텍스트 추출 ──────────────────────────────────
+                results: list[tuple[str, str | None]] = []
+                try:
+                    future_map = {pool.submit(_extract_for_path, p): p
+                                  for p in needs_extract}
+                    for i, fut in enumerate(as_completed(future_map)):
+                        path = future_map[fut]
+                        self.progress.emit(path, processed + i + 1)
+                        try:
+                            text = fut.result()
+                        except Exception:
+                            text = None
+                        results.append((path, text))
+                except Exception:
+                    logger.exception("[reindex] 추출 단계 예외 (chunk %d)", chunk_start)
+
+                # ── 3단계: 벌크 DB 쓰기 ──────────────────────────────────────
+                try:
+                    with get_connection() as conn:
+                        path_to_id = bulk_upsert_files(
+                            conn, [p for p, _ in results]
+                        )
+                        content_rows = [
+                            (path_to_id[p], t)
+                            for p, t in results
+                            if t and p in path_to_id
+                        ]
+                        cnt = bulk_upsert_contents(conn, content_rows)
                         conn.commit()
-                conn.commit()
-        except Exception:
-            logger.exception("ContentReindexThread DB 쓰기 예외")
+                        indexed += cnt
+                        logger.info("[reindex] 청크 commit: 이번 %d개, 누적 %d개",
+                                    cnt, indexed)
+                except Exception:
+                    logger.exception("[reindex] DB 쓰기 예외 (chunk %d)", chunk_start)
 
+                processed += len(chunk)
+
+        logger.info("[reindex] 완료: indexed=%d / total=%d", indexed, len(paths))
         self.finished_signal.emit(indexed)
 
 
@@ -634,8 +665,7 @@ class FolderIndexThread(QThread):
 
         logger.info("FolderIndexThread: %d개 파일 대상", len(targets))
 
-        # ContentReindexThread를 같은 스레드에서 직접 실행
-        # (total_count/progress/finished 시그널을 자신의 시그널로 전달)
+        # ContentReindexThread가 내부적으로 _BATCH_SIZE 청크 처리
         reindex = ContentReindexThread(targets)
         reindex.total_count.connect(self.total_count)
         reindex.progress.connect(self.progress)

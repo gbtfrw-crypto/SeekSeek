@@ -11,7 +11,7 @@ pptx_datas, pptx_binaries, pptx_hidden = collect_all('pptx')
 a = Analysis(
     ['main.py'],
     pathex=['.'],
-    binaries=collect_dynamic_libs('PyMuPDF') + pptx_binaries,
+    binaries=collect_dynamic_libs('PyMuPDF') + collect_dynamic_libs('lxml') + pptx_binaries,
     datas=[
         ('assets/icon.ico', 'assets'),
     ] + pptx_datas,
@@ -23,6 +23,7 @@ a = Analysis(
         'olefile',
         'openpyxl',
         'docx',
+        'pptx',
         'lxml',
         'lxml.etree',
         'lxml._elementpath',

@@ -248,12 +248,14 @@ def upsert_file(conn: sqlite3.Connection, filepath: str,
                 cur.execute(
                     "UPDATE files SET file_ref=? WHERE id=?", (file_ref, file_id)
                 )
+            logger.debug("[upsert_file] SKIP (mtime 동일) id=%s %s", file_id, filepath)
             return file_id
         # 수정일 변경 — 메타데이터 전체 갱신
         cur.execute(
             "UPDATE files SET name=?, extension=?, size=?, modified=?, file_ref=? WHERE id=?",
             (name, ext, size, modified, file_ref, file_id),
         )
+        logger.debug("[upsert_file] UPDATE id=%s %s", file_id, filepath)
     else:
         cur.execute(
             "INSERT INTO files (path, name, extension, size, modified, file_ref)"
@@ -261,6 +263,7 @@ def upsert_file(conn: sqlite3.Connection, filepath: str,
             (filepath, name, ext, size, modified, file_ref),
         )
         file_id = cur.lastrowid
+        logger.debug("[upsert_file] INSERT id=%s %s", file_id, filepath)
     return file_id
 
 
@@ -295,17 +298,140 @@ def upsert_content(conn: sqlite3.Connection, file_id: int, text: str):
     # 서로게이트 문자(잘못된 유니코드)가 포함되면 SQLite INSERT 시 UnicodeEncodeError 발생.
     # encode→decode로 안전하게 제거한다.
     text = text.encode("utf-8", errors="replace").decode("utf-8")
+    preview = text[:100].replace("\n", "↵")
+    logger.debug("[upsert_content] file_id=%s text_len=%d preview=%r", file_id, len(text), preview)
     cur = conn.cursor()
     cur.execute("SELECT id FROM file_contents WHERE file_id = ?", (file_id,))
     row = cur.fetchone()
     if row:
         # DELETE 트리거로 기존 FTS 인덱스 항목 제거
+        logger.debug("[upsert_content] DELETE 기존 id=%s", row[0])
         cur.execute("DELETE FROM file_contents WHERE id = ?", (row[0],))
     cur.execute(
         "INSERT INTO file_contents (file_id, content) VALUES (?, ?)",
         (file_id, text),
     )
+    logger.debug("[upsert_content] INSERT 완료 file_id=%s lastrowid=%s", file_id, cur.lastrowid)
     conn.execute("UPDATE files SET has_content = 1 WHERE id = ?", (file_id,))
+
+
+def bulk_upsert_files(conn: sqlite3.Connection,
+                      paths: list[str]) -> dict[str, int]:
+    """파일 목록을 일괄로 files 테이블에 삽입/갱신하고 path→id 맵을 반환한다.
+
+    - 신규 파일: INSERT OR IGNORE
+    - mtime 변경된 파일: UPDATE
+    - mtime 동일한 파일: 스킵
+    - os.stat() 실패한 파일: 스킵 (반환 맵에 포함 안 됨)
+    """
+    # 1. os.stat 수집 (접근 불가 파일 제외)
+    stat_map: dict[str, tuple[str, str, int, float]] = {}  # path → (name, ext, size, mtime)
+    for path in paths:
+        try:
+            st = os.stat(path)
+            name = os.path.basename(path)
+            ext  = os.path.splitext(name)[1].lower()
+            stat_map[path] = (name, ext, st.st_size, st.st_mtime)
+        except OSError:
+            pass
+
+    if not stat_map:
+        return {}
+
+    valid_paths = list(stat_map.keys())
+
+    # 2. 현재 DB 상태 일괄 조회 (청크 999개 이하로 분할 — SQLite 변수 제한)
+    existing: dict[str, tuple[int, float]] = {}  # path → (id, modified)
+    chunk_size = 990
+    for i in range(0, len(valid_paths), chunk_size):
+        chunk = valid_paths[i:i + chunk_size]
+        placeholders = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            f"SELECT id, path, modified FROM files WHERE path IN ({placeholders})", chunk
+        ).fetchall()
+        for file_id, path, modified in rows:
+            existing[path] = (file_id, modified)
+
+    # 3. 신규 파일 일괄 INSERT
+    new_rows = [
+        (path, name, ext, size, mtime, None)
+        for path, (name, ext, size, mtime) in stat_map.items()
+        if path not in existing
+    ]
+    if new_rows:
+        conn.executemany(
+            "INSERT OR IGNORE INTO files (path, name, extension, size, modified, file_ref)"
+            " VALUES (?,?,?,?,?,?)",
+            new_rows,
+        )
+        logger.debug("[bulk_upsert_files] INSERT %d개", len(new_rows))
+
+    # 4. mtime 변경된 파일 일괄 UPDATE
+    update_rows = [
+        (name, ext, size, mtime, path)
+        for path, (name, ext, size, mtime) in stat_map.items()
+        if path in existing and abs(existing[path][1] - mtime) >= 0.001
+    ]
+    if update_rows:
+        conn.executemany(
+            "UPDATE files SET name=?, extension=?, size=?, modified=? WHERE path=?",
+            update_rows,
+        )
+        logger.debug("[bulk_upsert_files] UPDATE %d개", len(update_rows))
+
+    # 5. 삽입/수정된 파일의 id 회수
+    path_to_id: dict[str, int] = {p: eid for p, (eid, _) in existing.items()}
+    inserted_paths = [row[0] for row in new_rows]
+    for i in range(0, len(inserted_paths), chunk_size):
+        chunk = inserted_paths[i:i + chunk_size]
+        placeholders = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            f"SELECT id, path FROM files WHERE path IN ({placeholders})", chunk
+        ).fetchall()
+        for file_id, path in rows:
+            path_to_id[path] = file_id
+
+    return path_to_id
+
+
+def bulk_upsert_contents(conn: sqlite3.Connection,
+                         content_rows: list[tuple[int, str]]) -> int:
+    """(file_id, text) 리스트를 file_contents에 일괄 삽입한다.
+
+    기존 콘텐츠가 있으면 삭제 후 삽입 (FTS5 트리거 동기화 유지).
+    반환값: 실제 삽입된 행 수
+    """
+    if not content_rows:
+        return 0
+
+    # 서로게이트 문자 정리
+    cleaned = [
+        (fid, text.encode("utf-8", errors="replace").decode("utf-8"))
+        for fid, text in content_rows
+    ]
+
+    file_ids = [fid for fid, _ in cleaned]
+
+    # 1. 기존 콘텐츠 일괄 삭제 (fc_ad 트리거 → FTS5 동기화)
+    conn.executemany(
+        "DELETE FROM file_contents WHERE file_id=?",
+        [(fid,) for fid in file_ids],
+    )
+
+    # 2. 새 콘텐츠 일괄 INSERT (fc_ai 트리거 → FTS5 동기화)
+    conn.executemany(
+        "INSERT INTO file_contents (file_id, content) VALUES (?,?)",
+        cleaned,
+    )
+
+    # 3. has_content 플래그 일괄 업데이트
+    conn.executemany(
+        "UPDATE files SET has_content=1 WHERE id=?",
+        [(fid,) for fid in file_ids],
+    )
+
+    logger.debug("[bulk_upsert_contents] %d개 삽입 완료", len(cleaned))
+    return len(cleaned)
 
 
 def get_stats(conn: sqlite3.Connection) -> dict:
