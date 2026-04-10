@@ -75,7 +75,10 @@ jobs:
           if (!(Test-Path $iscc)) {
             throw "ISCC.exe를 찾을 수 없습니다: $iscc"
           }
-          & $iscc "/DMyAppVersion=${{ steps.version.outputs.version }}" "installer.iss"
+          $version = "${{ steps.version.outputs.version }}"
+          (Get-Content installer.iss) -replace '#define MyAppVersion\s+"[^"]*"', "#define MyAppVersion `"$version`"" | Set-Content installer.iss
+          Write-Host "installer.iss 버전 패치: $version"
+          & $iscc "installer.iss"
           if ($LASTEXITCODE -ne 0) {
             throw "Inno Setup 빌드 실패 (exit code: $LASTEXITCODE)"
           }
