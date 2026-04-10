@@ -2,7 +2,7 @@
 """PyInstaller 빌드 스펙 — SeekSeek"""
 
 import sys
-from PyInstaller.utils.hooks import collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules, collect_data_files
 
 block_cipher = None
 
@@ -12,7 +12,7 @@ a = Analysis(
     binaries=collect_dynamic_libs('PyMuPDF') + collect_dynamic_libs('lxml'),
     datas=[
         ('assets/icon.ico', 'assets'),
-    ],
+    ] + collect_data_files('pptx'),
     hiddenimports=[
         'PyQt6.QtCore',
         'PyQt6.QtGui',
@@ -21,16 +21,13 @@ a = Analysis(
         'olefile',
         'openpyxl',
         'docx',
-        'pptx',
-        'pptx.util',
-        'pptx.enum',
         'lxml',
         'lxml.etree',
         'xml.etree.ElementTree',
         'zipfile',
         'zlib',
         'sqlite3',
-    ],
+    ] + collect_submodules('pptx'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
