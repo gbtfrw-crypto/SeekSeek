@@ -40,9 +40,6 @@ a = Analysis(
         'matplotlib', 'numpy', 'pandas', 'scipy', 'IPython',
         # 네트워크/보안 (오프라인 앱)
         'cryptography', 'ssl', '_ssl',
-        # lxml HTML 파싱 (pptx용 etree만 필요)
-        'lxml.html', 'lxml.html._difflib', 'lxml.html.diff',
-        'lxml.sax',
         # 기타 불필요
         'xmlrpc', 'email', 'http', 'ftplib', 'imaplib',
         'unittest', 'doctest', 'pdb', 'profile', 'pstats',
