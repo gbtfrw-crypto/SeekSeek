@@ -80,6 +80,10 @@ jobs:
             throw "Inno Setup 빌드 실패 (exit code: $LASTEXITCODE)"
           }
 
+      - name: List dist contents (debug)
+        shell: pwsh
+        run: Get-ChildItem dist -Recurse -File | Select-Object FullName, Length
+
       - name: Collect artifact paths
         id: artifacts
         shell: pwsh
