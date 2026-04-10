@@ -146,10 +146,11 @@ def _extract_xlsx(filepath: str) -> str | None:
 
 def _extract_pptx(filepath: str) -> str | None:
     """python-pptx로 추출하고, 실패하면 ZIP 직접 파싱으로 폴백한다."""
-    if Presentation is None:
-        logger.warning("python-pptx 미설치 — PPTX 내용 인덱싱 건너뜀")
-        return None
+    
     try:
+        if Presentation is None:
+            logger.debug("python-pptx 미설치, ZIP 폴백 시도 %s: %s", filepath, e)
+            return _extract_pptx_fallback(filepath)
         prs   = Presentation(filepath)
         texts = []
         for slide in prs.slides:
