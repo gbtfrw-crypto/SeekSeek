@@ -292,6 +292,9 @@ def upsert_content(conn: sqlite3.Connection, file_id: int, text: str):
 
     기존 행을 DELETE 후 INSERT 하는 방식으로 FTS5 트리거가 정상 동작하게 한다.
     """
+    # 서로게이트 문자(잘못된 유니코드)가 포함되면 SQLite INSERT 시 UnicodeEncodeError 발생.
+    # encode→decode로 안전하게 제거한다.
+    text = text.encode("utf-8", errors="replace").decode("utf-8")
     cur = conn.cursor()
     cur.execute("SELECT id FROM file_contents WHERE file_id = ?", (file_id,))
     row = cur.fetchone()

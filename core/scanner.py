@@ -578,10 +578,13 @@ class ContentReindexThread(QThread):
         try:
             with get_connection() as conn:
                 for i, (path, text) in enumerate(results):
-                    file_id = upsert_file(conn, path)
-                    if file_id is not None and text:
-                        upsert_content(conn, file_id, text)
-                        indexed += 1
+                    try:
+                        file_id = upsert_file(conn, path)
+                        if file_id is not None and text:
+                            upsert_content(conn, file_id, text)
+                            indexed += 1
+                    except Exception:
+                        logger.exception("ContentReindexThread 개별 파일 DB 쓰기 실패: %s", path)
                     if (i + 1) % _COMMIT_INTERVAL_MFT == 0:
                         conn.commit()
                 conn.commit()
