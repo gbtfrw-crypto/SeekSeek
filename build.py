@@ -19,9 +19,9 @@ BUILD_DIR = os.path.join(DIST_DIR, "SeekSeek")
 # ── 버전은 단일 소스 ──────────────────────────────────────────────────────────
 VERSION = "1.0.0"
 
-PYINSTALLER = os.path.join(os.path.dirname(sys.executable), "pyinstaller.exe")
-if not os.path.isfile(PYINSTALLER):
-    PYINSTALLER = os.path.join(ROOT, ".venv", "Scripts", "pyinstaller.exe")
+PYINSTALLER = shutil.which("pyinstaller") or os.path.join(
+    ROOT, ".venv", "Scripts", "pyinstaller.exe"
+)
 ISCC_CANDIDATES = [
     r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
     r"C:\Program Files\Inno Setup 6\ISCC.exe",
