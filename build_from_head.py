@@ -19,6 +19,9 @@ BUILD_DIR = os.path.join(DIST_DIR, "SeekSeek")
 # ?? 踰꾩쟾? ?⑥씪 ?뚯뒪 ??????????????????????????????????????????????????????????
 VERSION = "1.0.0"
 
+PYINSTALLER = shutil.which("pyinstaller") or os.path.join(
+    ROOT, ".venv", "Scripts", "pyinstaller.exe"
+)
 ISCC_CANDIDATES = [
     r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
     r"C:\Program Files\Inno Setup 6\ISCC.exe",
@@ -31,27 +34,6 @@ def run(cmd: list[str], **kwargs):
     if result.returncode != 0:
         print(f"[ERR] 명령 실패 (exit {result.returncode})")
         sys.exit(result.returncode)
-
-
-def resolve_pyinstaller_cmd() -> list[str]:
-    """Return a PyInstaller command compatible with the current Python env."""
-    try:
-        __import__("PyInstaller")
-        return [sys.executable, "-m", "PyInstaller"]
-    except ImportError:
-        pyinstaller = shutil.which("pyinstaller")
-        if pyinstaller:
-            return [pyinstaller]
-
-        local = os.path.join(ROOT, ".venv", "Scripts", "pyinstaller.exe")
-        if os.path.isfile(local):
-            return [local]
-
-        print("PyInstaller not found.")
-        print(f"  Current Python: {sys.executable}")
-        print("  Install and retry:")
-        print("  python -m pip install pyinstaller")
-        sys.exit(1)
 
 
 # ?? 鍮뚮뱶 ???쒓굅??遺덊븘???뚯씪/?대뜑 ??????????????????????????????????????????
@@ -164,8 +146,7 @@ def verify_bundled_packages():
 
 def build_exe():
     """PyInstaller濡??⑥씪 ?대뜑 鍮뚮뱶 ??遺덊븘???뚯씪 ?쒓굅."""
-    pyinstaller_cmd = resolve_pyinstaller_cmd()
-    run(pyinstaller_cmd + ["--clean", "--noconfirm", "seekseek.spec"], cwd=ROOT)
+    run([PYINSTALLER, "--clean", "--noconfirm", "seekseek.spec"], cwd=ROOT)
     verify_bundled_packages()
     strip_bloat()
     verify_bundled_packages()

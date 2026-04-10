@@ -25,12 +25,18 @@ import xml.etree.ElementTree as ET
 
 import config
 
-try:
-    from pptx import Presentation
-except ImportError:
-    Presentation = None
+
 
 logger = logging.getLogger(__name__)
+import traceback
+
+try:
+    from pptx import Presentation
+except ImportError as e:
+    print(f"{type(e).__name__}: {e}")
+    traceback.print_exc()
+    logger.debug("임포트 실패 %s",  e)
+    Presentation = None
 
 # ── HWP 바이너리 파싱 상수 ────────────────────────────────────────────────────
 #
@@ -146,12 +152,14 @@ def _extract_xlsx(filepath: str) -> str | None:
 
 def _extract_pptx(filepath: str) -> str | None:
     """python-pptx로 추출하고, 실패하면 ZIP 직접 파싱으로 폴백한다."""
-    
+    logger.debug("_extract_pptx::: (%s)", filepath)
+    logger.debug("Presentation::: (%s)", Presentation)
     try:
         if Presentation is None:
-            logger.debug("python-pptx 미설치, ZIP 폴백 시도 %s: %s", filepath, e)
+            logger.debug("python-pptx 미설치, ZIP 폴백 시도 %s: %s", filepath)
             return _extract_pptx_fallback(filepath)
         prs   = Presentation(filepath)
+        logger.debug("pptx 파싱 중 %s", filepath)
         texts = []
         for slide in prs.slides:
             for shape in slide.shapes:
