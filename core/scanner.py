@@ -268,7 +268,7 @@ class ScannerThread(QThread):
         """NTFS MFT 전체 열거로 파일명 검색용 캐시(mft_cache + file_cache 테이블)를 구축한다.
 
         files/file_contents 테이블(내용 검색용)은 여기서 건드리지 않는다.
-        내용 색인은 사용자가 "N개 변경" 버튼 혹은 "선택 폴더 색인" 버튼으로 별도 실행한다.
+        내용 색인은 사용자가 "본문 검색 색인" 버튼으로 별도 실행한다.
         """
         # scan_paths 가 드라이브 루트 목록이면 그 문자만 추출, 아니면 자동 감지
         if self.scan_paths:

@@ -166,7 +166,7 @@ def set_results(self, results: list[SearchResult]):
 │  인덱싱 대상 폴더:                                       │
 │  ┌──────────────────────────────────────────────┐       │
 │  │ C:\Users\... [완료✓]  C:\Projects\... [대기] │       │
-│  │ [+ 폴더 추가]  [인덱싱 시작]                 │       │
+│  │ [+ 폴더 추가]  [본문 검색 색인]               │       │
 │  └──────────────────────────────────────────────┘       │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -175,14 +175,14 @@ def set_results(self, results: list[SearchResult]):
 
 각 인덱싱 대상 폴더에는 상태를 나타내는 **배지(badge)**가 표시된다:
 
-```python
-FOLDER_STATUS = {
-    "pending":  "⏳ 대기",       # 아직 인덱싱 안 됨
-    "indexing": "🔄 인덱싱 중",  # 현재 스캔/인덱싱 진행 중
-    "done":     "✅ 완료",       # 인덱싱 완료
-    "changed":  "🔃 변경됨",     # USN으로 변경 감지됨
-}
-```
+실제 배지 텍스트:
+
+| 상태 키 | 표시 텍스트 | 의미 |
+|---------|------------|------|
+| `"pending"` | `"색인 대기"` | 아직 인덱싱 안 됨 |
+| `"indexing"` | `"색인 중…"` | 현재 스캔/인덱싱 진행 중 |
+| `"done"` | `"✓ 완료"` | 인덱싱 완료 |
+| `"changed"` | `"{n}개 변경"` | USN으로 변경된 파일 n개 감지 |
 
 ---
 
@@ -235,16 +235,16 @@ MainWindow
 ├── _scanner.progress ──→ _on_scan_progress()
 ├── _scanner.error ──→ _on_scan_error()
 │
-├── _usn_monitor.usn_changes_applied ──→ _on_usn_changes()
+├── _usn_monitor.paths_updated ──→ _on_usn_paths_changed()
 │
-├── _table_view.selectionModel().currentChanged ──→ _on_row_selected()
+├── table.selectionModel().currentRowChanged ──→ _on_selection_changed()
 │   └── 선택된 파일의 미리보기 표시
 │
-├── _table_view.doubleClicked ──→ _on_double_click()
+├── table.doubleClicked ──→ _on_double_click()
 │   └── 파일 탐색기에서 열기
 │
-├── _add_folder_button.clicked ──→ _on_add_folder()
-└── _index_button.clicked ──→ _on_index_selected_clicked()
+├── btn_add.clicked ──→ _add_indexed_folder()
+└── btn_index.clicked ──→ _on_index_clicked()
 ```
 
 ---

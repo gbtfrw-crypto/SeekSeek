@@ -459,14 +459,14 @@ class MainWindow(QMainWindow):
         self.folders_list.customContextMenuRequested.connect(self._show_folder_context_menu)
         layout.addWidget(self.folders_list, stretch=1)
 
-        self.btn_index_selected = QPushButton(" 본문 검색 색인")
-        self.btn_index_selected.setFixedHeight(28)
-        self.btn_index_selected.setFont(QFont("맑은 고딕", 9, QFont.Weight.Bold))
-        self.btn_index_selected.setStyleSheet(
+        self.btn_index = QPushButton(" 본문 검색 색인")
+        self.btn_index.setFixedHeight(28)
+        self.btn_index.setFont(QFont("맑은 고딕", 9, QFont.Weight.Bold))
+        self.btn_index.setStyleSheet(
             "QPushButton { font-weight:bold; padding:4px 8px; }"
         )
-        self.btn_index_selected.clicked.connect(self._on_index_selected_clicked)
-        layout.addWidget(self.btn_index_selected)
+        self.btn_index.clicked.connect(self._on_index_clicked)
+        layout.addWidget(self.btn_index)
         return panel
 
     # ── 메뉴바 ────────────────────────────────────────────────────────────────
@@ -602,7 +602,7 @@ class MainWindow(QMainWindow):
             self.snippet_view.setHtml("")
             return
 
-        folder_paths = self._get_checked_folders() if ct_query else None
+        folder_paths = self._get_registered_folders() if ct_query else None
         logger.info(" 검색 시작 │ 파일명=[%s] 내용=[%s] │ 캐시=%d개 │ 폴더=%s",
                     fn_query, ct_query, mft_cache.count(),
                     len(folder_paths) if folder_paths else "전체")
@@ -1039,7 +1039,7 @@ class MainWindow(QMainWindow):
         self._load_indexed_folders()
         logger.info("색인 폴더 삭제: %s", path)
 
-    def _get_checked_folders(self) -> list[str] | None:
+    def _get_registered_folders(self) -> list[str] | None:
         folders = list(self._folder_indexed_at.keys())
         return folders if folders else None
 
@@ -1058,7 +1058,7 @@ class MainWindow(QMainWindow):
         thread.finished_signal.connect(self._on_index_thread_done)
         thread.start()
 
-    def _on_index_selected_clicked(self):
+    def _on_index_clicked(self):
         folders = list(self._folder_indexed_at.keys())
         if not folders:
             QMessageBox.information(self, "본문 검색 색인", "등록된 폴더가 없습니다.")
@@ -1088,7 +1088,7 @@ class MainWindow(QMainWindow):
                 _set_badge(badge, "indexing", "색인 중…")
 
         self._indexing_folders = active_folders
-        self.btn_index_selected.setEnabled(False)
+        self.btn_index.setEnabled(False)
 
         if full_index_folders and pending_paths:
             self._running_index_count = 2
@@ -1115,7 +1115,7 @@ class MainWindow(QMainWindow):
         # 카운터는 어떤 순서로 스레드가 끝나도 안전하도록 하한을 0으로 고정.
         self._running_index_count = max(self._running_index_count - 1, 0)
         if self._running_index_count <= 0:
-            self.btn_index_selected.setEnabled(True)
+            self.btn_index.setEnabled(True)
 
     def _on_index_total_known(self, total: int):
         self._index_total = total

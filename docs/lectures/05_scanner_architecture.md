@@ -168,9 +168,9 @@ def _start_scan(self):
 ```python
 class USNMonitorThread(QThread):
     """5초 간격으로 USN Journal을 폴링하여 변경을 감지한다."""
-    
-    usn_changes_applied = pyqtSignal(int)  # 적용된 변경 수
-    
+
+    paths_updated = pyqtSignal(list)  # 변경된 파일 경로 목록
+
     def run(self):
         while not self.isInterruptionRequested():
             self._poll()
@@ -179,17 +179,18 @@ class USNMonitorThread(QThread):
                 if self.isInterruptionRequested():
                     return
                 self.msleep(100)
-    
+
     def _poll(self):
         """한 번의 폴링 사이클"""
         for drive in self._drives:
             journal_id, start_usn = load_usn_state(drive)
             changes, new_usn = read_usn_changes(drive, journal_id, start_usn)
-            
+
             if changes:
-                count = _apply_usn_changes(changes, self._cache, self._indexer)
+                added, deleted, changed_paths = _apply_usn_changes(changes, self._cache)
                 save_usn_state(drive, journal_id, new_usn)
-                self.usn_changes_applied.emit(count)
+                if changed_paths:
+                    self.paths_updated.emit(changed_paths)
 ```
 
 ### 5초 대기의 인터럽트 처리
