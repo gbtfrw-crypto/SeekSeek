@@ -76,6 +76,9 @@ jobs:
             throw "ISCC.exe를 찾을 수 없습니다: $iscc"
           }
           & $iscc "/DMyAppVersion=${{ steps.version.outputs.version }}" "installer.iss"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup 빌드 실패 (exit code: $LASTEXITCODE)"
+          }
 
       - name: Collect artifact paths
         id: artifacts
