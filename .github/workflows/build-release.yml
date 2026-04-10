@@ -41,15 +41,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if (Test-Path requirements.txt) {
-            pip install -r requirements.txt
+            python -m pip install -r requirements.txt
           }
           else {
-            pip install pyinstaller PyQt6 PyMuPDF olefile openpyxl python-docx python-pptx lxml
+            python -m pip install PyQt6 PyMuPDF olefile openpyxl python-docx python-pptx lxml
           }
+          python -m pip install pyinstaller
 
       - name: Build app with PyInstaller
         shell: pwsh
-        run: pyinstaller seekseek.spec --noconfirm
+        run: python -m PyInstaller seekseek.spec --noconfirm
 
       - name: Create portable zip
         shell: pwsh
