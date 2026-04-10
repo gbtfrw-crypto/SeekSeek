@@ -79,10 +79,47 @@ def strip_bloat():
     print(f"✅ 불필요 파일 {removed}개 제거 완료")
 
 
+def verify_bundled_packages():
+    """번들링된 주요 패키지가 실제로 포함되었는지 확인한다."""
+    internal = os.path.join(BUILD_DIR, "_internal")
+    checks = {
+        "pptx":    os.path.join(internal, "pptx"),
+        "lxml":    os.path.join(internal, "lxml"),
+        "openpyxl": os.path.join(internal, "openpyxl"),
+        "docx":    os.path.join(internal, "docx"),
+        "fitz":    os.path.join(internal, "fitz"),
+        "olefile": os.path.join(internal, "olefile"),
+    }
+    print("\n▶ 번들 패키지 검증:")
+    all_ok = True
+    for name, path in checks.items():
+        if os.path.isdir(path):
+            count = sum(1 for _, _, fs in os.walk(path) for _ in fs)
+            print(f"  ✅ {name}: {count}개 파일")
+        elif os.path.isfile(path + ".pyc") or os.path.isfile(path + ".pyd"):
+            print(f"  ✅ {name}: 단일 파일")
+        else:
+            print(f"  ❌ {name}: 누락!")
+            all_ok = False
+    # pptx 템플릿 파일 확인
+    pptx_templates = os.path.join(internal, "pptx", "templates")
+    if os.path.isdir(pptx_templates):
+        files = os.listdir(pptx_templates)
+        print(f"  ✅ pptx/templates: {files}")
+    else:
+        print(f"  ❌ pptx/templates: 누락!")
+        all_ok = False
+    if not all_ok:
+        print("⚠ 일부 패키지가 누락되었습니다!")
+    return all_ok
+
+
 def build_exe():
     """PyInstaller로 단일 폴더 빌드 후 불필요 파일 제거."""
     run([PYINSTALLER, "--clean", "--noconfirm", "seekseek.spec"], cwd=ROOT)
+    verify_bundled_packages()
     strip_bloat()
+    verify_bundled_packages()
     size_mb = sum(
         os.path.getsize(os.path.join(dp, f))
         for dp, _, fs in os.walk(BUILD_DIR) for f in fs
