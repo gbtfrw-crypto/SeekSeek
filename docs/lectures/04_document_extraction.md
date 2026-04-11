@@ -119,45 +119,57 @@ def _extract_xlsx(path: str) -> str | None:
 
 ## 5. PPTX 추출 (이중 전략)
 
-### 전략 1: python-pptx 라이브러리
+PPTX 추출은 `_extract_pptx()` → `_extract_pptx_fallback()` 순서의 2단계 폴백으로 구현된다.
+
+### 전략 1 (기본): python-pptx Presentation API
 
 ```python
-from pptx import Presentation
-
-def _extract_pptx_primary(path: str) -> str | None:
-    """python-pptx로 슬라이드 텍스트를 추출한다."""
-    prs = Presentation(path)
-    texts = []
-    for slide in prs.slides:
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                for para in shape.text_frame.paragraphs:
-                    texts.append(para.text)
-    return "\n".join(texts) or None
-```
-
-### 전략 2: ZIP + XML 파싱 (Fallback)
-
-python-pptx가 실패하면, ZIP 내부의 XML을 직접 파싱한다:
-
-```python
-import zipfile
-import xml.etree.ElementTree as ET
-
-def _extract_pptx_fallback(path: str) -> str | None:
-    """ZIP 구조에서 직접 XML을 파싱하여 텍스트를 추출한다."""
-    with zipfile.ZipFile(path) as z:
+def _extract_pptx(filepath: str) -> str | None:
+    """PPTX에서 슬라이드 텍스트를 추출한다. 실패 시 ZIP 폴백 사용."""
+    try:
+        if Presentation is None:
+            # python-pptx 미설치 → 바로 ZIP 폴백
+            return _extract_pptx_fallback(filepath)
+        prs   = Presentation(filepath)
         texts = []
-        for name in sorted(z.namelist()):
-            if name.startswith("ppt/slides/slide") and name.endswith(".xml"):
-                xml_data = z.read(name)
-                root = ET.fromstring(xml_data)
-                # 모든 텍스트 노드를 추출
-                for elem in root.iter():
-                    if elem.text:
-                        texts.append(elem.text.strip())
-    return "\n".join(texts) or None
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for para in shape.text_frame.paragraphs:
+                        if t := para.text.strip():
+                            texts.append(t)
+        return "\n".join(texts) if texts else None
+    except Exception as e:
+        # 암호화된 파일, 손상된 ZIP 구조 등 파싱 실패
+        logger.debug("python-pptx 파싱 실패, ZIP 폴백 시도: %s", e)
+        return _extract_pptx_fallback(filepath)
 ```
+
+### 전략 2 (폴백): ZIP 직접 파싱 + `<a:t>` 정규식
+
+python-pptx가 미설치이거나 파싱 오류 시 ZIP을 직접 열어 슬라이드 XML에서
+DrawingML `<a:t>` 텍스트 태그를 정규식으로 추출한다:
+
+```python
+_PPTX_SLIDE_RE = re.compile(r"ppt/slides/slide\d+\.xml")
+_PPTX_T_RE     = re.compile(r"<a:t[^>]*>(.*?)</a:t>", re.DOTALL)
+
+def _extract_pptx_fallback(filepath: str) -> str | None:
+    """PPTX를 ZIP으로 열어 슬라이드 XML에서 <a:t> 텍스트를 직접 추출한다."""
+    texts = []
+    with zipfile.ZipFile(filepath, "r") as zf:
+        slide_names = sorted(n for n in zf.namelist() if _PPTX_SLIDE_RE.match(n))
+        for name in slide_names:
+            xml_str = zf.read(name).decode("utf-8", errors="replace")
+            for m in _PPTX_T_RE.finditer(xml_str):
+                if t := m.group(1).strip():
+                    texts.append(t)
+    return "\n".join(texts) if texts else None
+```
+
+> **왜 ET.fromstring 대신 정규식인가?**
+> DrawingML XML은 네임스페이스(`a:`, `p:`, `r:`)가 복잡하여 ElementTree로 순회할 때
+> 태그명 매칭이 번거롭다. `<a:t>` 태그만 정확히 잡으면 충분하므로 정규식이 더 간결하다.
 
 ---
 

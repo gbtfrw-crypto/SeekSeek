@@ -1,21 +1,38 @@
 """PyQt6 메인 윈도우
 
-검색 UI, 스캔 제어, 결과 테이블, 내용 미리보기, 색인 폴더 패널을 포함한다.
+SeekSeek의 전체 UI를 구성한다.
+검색 입력, 결과 테이블, 내용 미리보기, 본문 검색 색인 폴더 패널,
+스캔 제어, 찾기 바(Ctrl+F)를 포함한다.
+
+■ UI 레이아웃
+  ┌──────────────────────────────────┬─────────────────────────────┐
+  │  좌측 패널 (기본 3:1 비율)           │  우측 패널                   │
+  │  ├─ 검색 폼 (파일명 / 본문)          │  ├─ 미리보기 영역             │
+  │  ├─ 결과 건수 레이블                 │  │   ├─ 파일명 레이블          │
+  │  ├─ 결과 테이블 (QTableView)        │  │   ├─ 본문 QTextEdit        │
+  │  └─ 스캔 진행 바 + 상태 레이블       │  │   └─ 찾기 바 (Ctrl+F)      │
+  └──────────────────────────────────│  └─ 색인 폴더 패널            │
+                                     └─────────────────────────────┘
+  수평 QSplitter(메인) + 수직 QSplitter(우측) 조합으로 드래그 크기 조절 가능.
 
 ■ Qt Model/View 아키텍처
   ResultTableModel(QAbstractTableModel) → QTableView
-  - data() 는 화면에 보이는 행만 호출되는 가상 렌더링 방식
-  - 100만 건 결과도 냥비 없이 표시 가능 (O(1) 랜덤 액세스)
-  - set_results() 시 beginResetModel/endResetModel 로
-    QTableView에 데이터 변경을 알림
+  - data()는 화면에 보이는 행만 호출되는 가상 렌더링 방식
+  - 100만 건 결과도 낭비 없이 표시 가능 (O(1) 랜덤 액세스)
+  - set_results() 시 beginResetModel/endResetModel로 QTableView에 변경 알림
+  - 컬럼: 이름 | 경로 | 크기 | 수정일 | 확장자 | 매칭
 
-■ 시그널/슬롯 구조 (QThread ↔ GUI 통신)
-  ScannerThread.progress       → MainWindow._on_scan_progress
-  ScannerThread.finished_signal → MainWindow._on_scan_finished
-  USNMonitorThread.updated      → MainWindow._on_usn_updated
-  ContentReindexThread.progress → MainWindow._on_reindex_progress
-  → Qt가 시그널 전달 시 자동으로 스레드 경계를 마샬링하므로
-    별도 락 없이 GUI 업데이트 안전
+■ 스레드 → GUI 시그널/슬롯 구조
+  ScannerThread.progress         → _on_scan_progress    (스캔 진행 상태)
+  ScannerThread.finished_signal  → _on_scan_finished    (스캔 완료 후처리)
+  USNMonitorThread.paths_updated → _on_usn_paths_changed (변경 파일 배지 업데이트)
+  ContentReindexThread.progress  → _on_index_progress   (색인 진행률 표시)
+  → Qt 시그널은 크로스-스레드 전달 시 이벤트 큐를 통해 자동 마샬링하므로
+    GUI 스레드에서 별도 락 없이 안전하게 수신·업데이트 가능
+
+■ 배지 시스템 (_folder_badges)
+  색인 폴더 패널의 각 행에 QLabel 배지를 붙여 상태를 색상으로 표시한다:
+  pending(회색) → done(초록) → changed(주황, N개 변경) → indexing(파란, 색인 중)
 """
 import os
 import html
@@ -67,12 +84,30 @@ def _set_badge(badge: QLabel, state: str, text: str) -> None:
 # ── 결과 테이블 모델 ──────────────────────────────────────────────────────────
 
 class ResultTableModel(QAbstractTableModel):
-    """가상 렌더링 모델 — 화면에 보이는 행만 data()가 호출된다."""
+    """검색 결과 가상 렌더링 모델.
+
+    QTableView와 연결되어 화면에 보이는 행만 data()가 호출된다.
+    100만 건 결과를 메모리에 유지하더라도 렌더링 비용은 화면 높이에 비례한다.
+
+    컬럼 구성 (0~5):
+      0: 이름       — 파일명, 아이콘 포함 (DecorationRole)
+      1: 경로       — 부모 디렉터리 절대 경로
+      2: 크기       — 바이트 → KB/MB/GB 표시
+      3: 수정일     — YYYY-MM-DD HH:MM 포맷
+      4: 확장자     — 소문자 확장자 (.py 등), 보라색
+      5: 매칭       — 파일명 / 본문 / 파일명+본문, 색상 구분
+
+    지원 ItemDataRole:
+      DisplayRole    — 셀 텍스트 (컬럼 0~5)
+      UserRole       — 파일 전체 경로 문자열 (컨텍스트 메뉴·더블클릭에 사용)
+      DecorationRole — 컬럼 0에 파일/폴더 아이콘 (OS 아이콘 캐시 포함)
+      ForegroundRole — 컬럼 4(확장자 보라), 5(매칭 타입 색상)
+    """
 
     _COL_LABELS = ["이름", "경로", "크기", "수정일", "확장자", "매칭"]
     _COLOR_MAP  = {
-        "both":    QColor("#2e7d32"),
-        "content": QColor("#1565c0"),
+        "both":    QColor("#2e7d32"),   # 파일명+본문 매칭: 초록
+        "content": QColor("#1565c0"),   # 본문 전용 매칭: 파란
     }
 
     def __init__(self, parent=None):
@@ -166,32 +201,47 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 600)
         self.resize(1180, 700)
 
+        # ── 스레드 핸들 ────────────────────────────────────────────────────────
+        # 각 스레드는 시작 시 할당되고 완료 후 참조만 남긴다(isRunning() 체크용).
         self._scanner_thread: ScannerThread | None = None
         self._cache_init_thread: ScannerThread | None = None
         self._usn_monitor: USNMonitorThread | None = None
         self._reindex_thread: ContentReindexThread | None = None
         self._folder_index_thread: FolderIndexThread | None = None
+
+        # ── 검색 결과 상태 ─────────────────────────────────────────────────────
         self._results: list[SearchResult] = []
-        self._pending_reindex_by_folder: dict[str, set[str]] = {}
-        self._folder_badges: dict[str, QLabel] = {}
-        self._folder_indexed_at: dict[str, float | None] = {}
-        self._indexing_folders: list[str] = []
-        self._index_total: int = 0
-        self._sort_col: int = -1
+        self._sort_col: int = -1   # 정렬 기준 컬럼 (-1 = 기본 순서)
         self._sort_asc: bool = True
-        self._preview_cache: dict[str, str] = {}
-        # 동시 색인(전체+변경분) 시 완료 처리를 1회로 합치기 위한 카운터.
-        # 각 스레드 finished_signal에서 _on_index_thread_done이 감소시킨다.
+
+        # ── 색인 폴더 상태 ─────────────────────────────────────────────────────
+        # _pending_reindex_by_folder: USN 감지 변경 파일을 폴더별로 누적
+        #   {folder_path: {changed_file1, changed_file2, ...}}
+        self._pending_reindex_by_folder: dict[str, set[str]] = {}
+        self._folder_badges: dict[str, QLabel] = {}         # 폴더별 상태 배지
+        self._folder_indexed_at: dict[str, float | None] = {}  # 마지막 색인 완료 시각
+        self._indexing_folders: list[str] = []              # 현재 색인 중인 폴더 목록
+        self._index_total: int = 0                          # 색인 진행률 분모
+
+        # ── 동시 색인 완료 카운터 ──────────────────────────────────────────────
+        # 전체 색인(FolderIndexThread)과 변경분 색인(ContentReindexThread)이
+        # 동시에 실행될 때 두 스레드 모두 완료해야 완료 UI 처리를 수행하기 위해 사용.
+        # finished_signal 수신 시마다 1씩 감소, 0이 되면 완료 처리 실행.
         self._running_index_count: int = 0
-        self._child_windows: list[QMainWindow] = []
 
-        self._initializing = False
+        # ── 기타 ──────────────────────────────────────────────────────────────
+        self._preview_cache: dict[str, str] = {}  # 파일 경로 → 미리보기 텍스트 캐시
+        self._child_windows: list[QMainWindow] = []  # "새 창" 레퍼런스 유지용
 
-        init_db()
-        self._build_ui()
-        self._update_status_stats()
-        self._load_indexed_folders()
+        # ── 초기화 시퀀스 ──────────────────────────────────────────────────────
+        self._initializing = False  # True이면 검색 입력을 비활성화
 
+        init_db()              # DB 스키마 초기화 (없으면 생성, 마이그레이션)
+        self._build_ui()       # 위젯 구성 (이후 self.table, self.input_filename 등 사용 가능)
+        self._update_status_stats()   # 하단 상태 표시줄에 인덱스 통계 표시
+        self._load_indexed_folders()  # 색인 폴더 패널에 등록된 폴더 목록 로드
+
+        # file_cache가 비어 있으면 MFT 스캔 없이는 검색 불가 → 검색 입력 비활성화
         try:
             with get_connection() as conn:
                 cache_cnt = conn.execute('SELECT COUNT(*) FROM file_cache').fetchone()[0]
@@ -205,10 +255,12 @@ class MainWindow(QMainWindow):
         logger.info("SeekSeek 시작됨 [관리자]")
 
         if mft_cache.count() > 0:
+            # mft_cache가 이미 채워진 상태 (같은 프로세스에서 재초기화)
             self.lbl_scan_status.setText(" 준비됨")
             for w in (self.input_filename, self.input_content):
                 w.setEnabled(True)
         elif self._initializing:
+            # file_cache가 비어 있음 → 전체 MFT 스캔 필요
             try:
                 with get_connection() as conn:
                     if mft_cache.load_from_db(conn):
@@ -218,6 +270,7 @@ class MainWindow(QMainWindow):
             self.lbl_scan_status.setText("🔄 초기화 중 — 파일 스캔 후 검색 가능")
             self._start_scan()
         else:
+            # file_cache에 데이터 있음 → 캐시 초기화(빠른 경로) 실행
             self._start_cache_init()
 
     # ── UI 구성 ───────────────────────────────────────────────────────────────
@@ -256,6 +309,19 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 4)
         layout.setSpacing(6)
 
+        layout.addLayout(self._build_search_form())
+
+        self.lbl_result_count = QLabel("")
+        self.lbl_result_count.setFont(QFont("맑은 고딕", 9))
+        self.lbl_result_count.setStyleSheet("color:#666; padding:0 2px;")
+        layout.addWidget(self.lbl_result_count)
+
+        layout.addWidget(self._build_result_table(), stretch=1)
+        layout.addLayout(self._build_scan_bar())
+        return panel
+
+    def _build_search_form(self) -> QFormLayout:
+        """파일명·본문 검색 입력 폼을 구성한다."""
         font_search = QFont("맑은 고딕", 9)
         lbl_style   = "font-weight:bold; color:#333; min-width:60px;"
 
@@ -289,14 +355,10 @@ class MainWindow(QMainWindow):
             form.addRow(lbl, edit)
             setattr(self, attr, edit)
 
-        layout.addLayout(form)
+        return form
 
-        self.lbl_result_count = QLabel("")
-        self.lbl_result_count.setFont(QFont("맑은 고딕", 9))
-        self.lbl_result_count.setStyleSheet("color:#666; padding:0 2px;")
-        layout.addWidget(self.lbl_result_count)
-
-        # 결과 테이블 (가상 렌더링: 보이는 행만 data() 호출)
+    def _build_result_table(self) -> QTableView:
+        """결과 테이블(가상 렌더링)을 구성하고 self.table / self._model을 세팅한다."""
         self._model = ResultTableModel()
         self.table = QTableView()
         self.table.setModel(self._model)
@@ -320,10 +382,7 @@ class MainWindow(QMainWindow):
         self.table.selectionModel().currentRowChanged.connect(self._on_selection_changed)
         hdr.sectionClicked.connect(self._on_header_clicked)
         hdr.setSortIndicatorShown(True)
-        layout.addWidget(self.table, stretch=1)
-
-        layout.addLayout(self._build_scan_bar())
-        return panel
+        return self.table
 
     def _build_scan_bar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -339,7 +398,20 @@ class MainWindow(QMainWindow):
         return bar
 
     def _build_right_panel(self) -> QWidget:
-        # 미리보기 파일명 레이블
+        v_splitter = QSplitter(Qt.Orientation.Vertical)
+        v_splitter.addWidget(self._build_preview_area())
+        v_splitter.addWidget(self._build_folders_panel())
+        v_splitter.setStretchFactor(0, 3)
+        v_splitter.setStretchFactor(1, 1)
+        v_splitter.setHandleWidth(4)
+        v_splitter.setStyleSheet(
+            "QSplitter::handle:vertical {"
+            "  background:#39ff1466; min-height:4px; max-height:4px; }"
+        )
+        return v_splitter
+
+    def _build_preview_area(self) -> QWidget:
+        """미리보기 패널(파일명 레이블 + 본문 뷰 + 찾기 바)을 구성한다."""
         self.lbl_preview_name = QLabel("")
         self.lbl_preview_name.setFont(QFont("맑은 고딕", 8))
         self.lbl_preview_name.setStyleSheet(
@@ -357,6 +429,8 @@ class MainWindow(QMainWindow):
             "QScrollBar::handle:vertical { background:#aaa; border-radius:4px; min-height:20px; }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
         )
+        self.snippet_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.snippet_view.customContextMenuRequested.connect(self._show_preview_context_menu)
 
         # 찾기 바 (Ctrl+F)
         find_bar = QWidget()
@@ -404,26 +478,17 @@ class MainWindow(QMainWindow):
         preview_layout = QVBoxLayout(preview_panel)
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.setSpacing(0)
-        self.snippet_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.snippet_view.customContextMenuRequested.connect(self._show_preview_context_menu)
-
         preview_layout.addWidget(self.lbl_preview_name)
         preview_layout.addWidget(self.snippet_view)
         preview_layout.addWidget(find_bar)
-
-        v_splitter = QSplitter(Qt.Orientation.Vertical)
-        v_splitter.addWidget(preview_panel)
-        v_splitter.addWidget(self._build_folders_panel())
-        v_splitter.setStretchFactor(0, 3)
-        v_splitter.setStretchFactor(1, 1)
-        v_splitter.setHandleWidth(4)
-        v_splitter.setStyleSheet(
-            "QSplitter::handle:vertical {"
-            "  background:#39ff1466; min-height:4px; max-height:4px; }"
-        )
-        return v_splitter
+        return preview_panel
 
     def _build_folders_panel(self) -> QWidget:
+        """본문 검색 색인 폴더 패널을 구성한다.
+
+        헤더(제목 + '+' 버튼) + 폴더 목록(QListWidget) + '본문 검색 색인' 버튼으로 구성.
+        각 폴더 행에는 상태 배지(QLabel)가 함께 표시된다.
+        """
         panel  = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -472,6 +537,12 @@ class MainWindow(QMainWindow):
     # ── 메뉴바 ────────────────────────────────────────────────────────────────
 
     def _build_menu_bar(self):
+        """메뉴바를 구성한다.
+
+        파일(&F): 새 창 / DB 폴더 열기 / 파일명 재스캔(F5) / 종료
+        도구(&T): 제외 폴더 설정
+        도움말(&H): 본문 검색 도움말(F1) / 이 프로그램에 대해
+        """
         mb = self.menuBar()
         mb.setFont(QFont("맑은 고딕", 9))
 
@@ -1167,6 +1238,17 @@ class MainWindow(QMainWindow):
     # ── 종료 처리 ─────────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
+        """창 닫기 이벤트 — 백그라운드 스레드를 종료하고 mft_cache를 DB에 저장한다.
+
+        ■ 종료 순서
+          1. MFT 스캔 스레드: stop 요청 후 최대 10초 대기
+          2. 색인 스레드(재색인/폴더): 진행 중이면 완료까지 최대 10초 대기
+          3. USN 모니터: stop 요청 후 최대 5초 대기
+          4. mft_cache → DB 저장 (다음 시작 시 빠른 캐시 로드용)
+
+        타임아웃을 초과하면 스레드가 강제 종료되므로, 데이터 손실 가능성을 최소화하기 위해
+        스레드 간 종료 순서를 지킨다.
+        """
         for attr in ('_cache_init_thread', '_scanner_thread'):
             t = getattr(self, attr, None)
             if t is not None and t.isRunning():
@@ -1204,6 +1286,10 @@ class MainWindow(QMainWindow):
 # ── 모듈 수준 유틸리티 ────────────────────────────────────────────────────────
 
 def _format_size(size: int) -> str:
+    """바이트 크기를 사람이 읽기 좋은 단위 문자열로 변환한다.
+
+    1023 B → "1023 B", 1024 B → "1.0 KB", 1048576 B → "1.0 MB"
+    """
     if size < 1024:        return f"{size} B"
     if size < 1024 ** 2:   return f"{size / 1024:.1f} KB"
     if size < 1024 ** 3:   return f"{size / 1024 ** 2:.1f} MB"
@@ -1211,15 +1297,33 @@ def _format_size(size: int) -> str:
 
 
 def _extract_highlight_terms(query: str) -> list[str]:
-    """FTS5 쿼리에서 하이라이트용 순수 단어/구문을 추출한다."""
+    """FTS5 쿼리에서 하이라이트용 순수 단어/구문을 추출한다.
+
+    FTS5 연산자(AND/OR/NOT/NEAR/^/())와 와일드카드(*)를 제거하고
+    실제 검색 단어와 구문만 반환한다. 미리보기 텍스트에서 강조할 용어 목록으로 사용.
+
+    ■ 처리 단계
+      1. "..." 구문 검색 → 구문 전체를 하나의 term으로 추출
+      2. NEAR(a, b, 10) → a, b 단어 추출 (숫자 제거)
+      3. AND/OR/NOT 연산자 제거
+      4. ^, (, ) 특수문자 제거
+      5. 나머지 공백 구분 단어에서 후행 * 제거하여 추출
+
+    Examples:
+      '"import pandas"' → ['import pandas']
+      'NEAR(def return, 10)' → ['def', 'return']
+      'A AND B' → ['A', 'B']
+    """
     terms: list[str] = []
     q = query.strip()
 
+    # 1단계: 큰따옴표 구문 검색 추출
     for phrase in re.findall(r'"([^"]+)"', q):
         if phrase.strip():
             terms.append(phrase.strip())
     q = re.sub(r'"[^"]*"', ' ', q)
 
+    # 2단계: NEAR(...) 내부 단어 추출
     for near_body in re.findall(r'NEAR\s*\(([^)]+)\)', q, flags=re.IGNORECASE):
         for w in re.split(r'[\s,]+', near_body):
             w = w.strip().rstrip('*')
@@ -1227,6 +1331,7 @@ def _extract_highlight_terms(query: str) -> list[str]:
                 terms.append(w)
     q = re.sub(r'NEAR\s*\([^)]*\)', ' ', q, flags=re.IGNORECASE)
 
+    # 3~5단계: 나머지 FTS5 연산자·특수문자 제거 후 단어 추출
     q = re.sub(r'\b(AND|OR|NOT)\b', ' ', q, flags=re.IGNORECASE)
     q = re.sub(r'[\^()]+', ' ', q)
     for w in q.split():
@@ -1237,7 +1342,27 @@ def _extract_highlight_terms(query: str) -> list[str]:
 
 
 def _build_full_content_html(content: str, keyword: str) -> str:
-    """전체 파일 내용을 HTML로 렌더링한다. keyword가 있으면 하이라이트."""
+    """파일 텍스트를 QTextEdit에 표시할 HTML 문자열로 변환한다.
+
+    keyword가 있으면 _extract_highlight_terms()로 강조 단어 목록을 추출하고,
+    각 단어를 파란색+하늘색 배경 <b> 태그로 감싼다.
+    첫 번째 매치에는 <a name="first_match"> 앵커를 삽입하여
+    _show_preview()에서 scrollToAnchor("first_match")로 자동 스크롤한다.
+
+    ■ XSS 방지
+      html.escape()로 HTML 특수문자를 먼저 이스케이프한 뒤 강조 마크업을 삽입하므로
+      파일 내용에 HTML 태그가 포함되어도 인젝션되지 않는다.
+
+    ■ 성능 제한
+      동일 용어가 500회를 초과하면 이후 강조를 생략하여 극단적 강조 처리 지연을 방지.
+
+    Args:
+        content: 미리보기할 텍스트 (이미 MAX_PREVIEW_SIZE로 잘린 상태).
+        keyword: FTS5 쿼리 또는 빈 문자열 (없으면 강조 없이 렌더링).
+
+    Returns:
+        QTextEdit.setHtml()에 바로 전달할 수 있는 HTML 문자열.
+    """
     text = html.escape(content)
 
     if keyword:
@@ -1246,10 +1371,12 @@ def _build_full_content_html(content: str, keyword: str) -> str:
 
         def replacer(m: re.Match) -> str:
             if count[0] >= 500:
+                # 500회 초과 — 강조 생략하고 원문 반환
                 return m.group()
             count[0] += 1
             prefix = ""
             if not anchor_placed[0]:
+                # 첫 번째 매치에만 앵커 삽입 (scrollToAnchor 스크롤 대상)
                 anchor_placed[0] = True
                 prefix = '<a name="first_match"></a>'
             return f'{prefix}<b style="color:#1565c0;background:#e3f2fd;">{m.group()}</b>'

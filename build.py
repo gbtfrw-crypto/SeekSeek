@@ -1,8 +1,9 @@
-"""SeekSeek 鍮뚮뱶 ?ㅽ겕由쏀듃
+"""SeekSeek 빌드 스크립트
 
-?ъ슜踰?
-    python build.py              # ?몄뒪?⑤윭 + ?ы꽣釉?ZIP 紐⑤몢 鍮뚮뱶
-    python build.py --portable   # ?ы꽣釉?ZIP留?    python build.py --installer  # ?몄뒪?⑤윭留?(Inno Setup ?꾩슂)
+사용법
+    python build.py              # 인스톨러 + 포터블 ZIP 모두 빌드
+    python build.py --portable   # 포터블 ZIP만
+    python build.py --installer  # 인스톨러만 (Inno Setup 필요)
 """
 import os
 import sys
@@ -16,7 +17,7 @@ ROOT     = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(ROOT, "dist")
 BUILD_DIR = os.path.join(DIST_DIR, "SeekSeek")
 
-# ?? 踰꾩쟾? ?⑥씪 ?뚯뒪 ??????????????????????????????????????????????????????????
+# 현재 버전은 단일 상수로 관리
 VERSION = "1.0.0"
 
 ISCC_CANDIDATES = [
@@ -54,13 +55,13 @@ def resolve_pyinstaller_cmd() -> list[str]:
         sys.exit(1)
 
 
-# ?? 鍮뚮뱶 ???쒓굅??遺덊븘???뚯씪/?대뜑 ??????????????????????????????????????????
-# Qt ?대?吏 ?щ㎎ ?뚮윭洹몄씤 (ico/svg留??꾩슂)
+# 빌드 결과에서 제거할 불필요 파일/폴더
+# Qt 이미지 형식 플러그인 (ico/svg만 필요)
 _REMOVE_QT_IMAGE_PLUGINS = {
     "qjpeg.dll", "qwebp.dll", "qtiff.dll", "qicns.dll",
     "qgif.dll", "qwbmp.dll", "qtga.dll", "qpdf.dll",
 }
-# 遺덊븘??DLL/?뚮윭洹몄씤
+# 불필요 DLL/플러그인
 _REMOVE_FILES = {
     "Qt6Pdf.dll",           # PyMuPDF 자체 PDF 엔진 사용
     "libssl-3.dll",         # 오프라인 앱, SSL 불필요
@@ -70,16 +71,15 @@ _REMOVE_FILES = {
     "qminimal.dll",         # 최소 플랫폼 드라이버 불필요
     "_ssl.pyd",             # Python SSL 모듈
 }
-# ?듭㎏濡??쒓굅???대뜑
+# 통째로 제거할 폴더
 _REMOVE_DIRS = [
-    os.path.join("_internal", "PIL"),
     os.path.join("_internal", "lxml", "html"),
     os.path.join("_internal", "lxml", "sax.cp311-win_amd64.pyd"),
 ]
 
 
 def strip_bloat():
-    """鍮뚮뱶 寃곌낵?먯꽌 遺덊븘?뷀븳 ?뚯씪/?대뜑瑜??쒓굅???⑸웾??以꾩씤??"""
+    """빌드 결과에서 불필요한 파일/폴더를 제거해 용량을 줄인다."""
     removed = 0
     for dirpath, dirnames, filenames in os.walk(BUILD_DIR):
         for fname in filenames:
@@ -125,6 +125,7 @@ def verify_bundled_packages():
     checks = {
         "pptx": os.path.join(internal, "pptx"),
         "lxml": os.path.join(internal, "lxml"),
+        "PIL": os.path.join(internal, "PIL"),
         "openpyxl": os.path.join(internal, "openpyxl"),
         "docx": os.path.join(internal, "docx"),
         "fitz": os.path.join(internal, "fitz"),
@@ -163,7 +164,7 @@ def verify_bundled_packages():
     return all_ok
 
 def build_exe():
-    """PyInstaller濡??⑥씪 ?대뜑 鍮뚮뱶 ??遺덊븘???뚯씪 ?쒓굅."""
+    """PyInstaller로 EXE 폴더를 빌드하고 불필요 파일을 제거한다."""
     pyinstaller_cmd = resolve_pyinstaller_cmd()
     run(pyinstaller_cmd + ["--clean", "--noconfirm", "seekseek.spec"], cwd=ROOT)
     verify_bundled_packages()
@@ -177,7 +178,7 @@ def build_exe():
 
 
 def build_portable():
-    """dist/SeekSeek ?대뜑瑜?ZIP?쇰줈 ?뺤텞."""
+    """dist/SeekSeek 폴더를 포터블 ZIP으로 압축한다."""
     if not os.path.isdir(BUILD_DIR):
         print("dist/SeekSeek 없음, EXE 먼저 빌드합니다.")
         build_exe()
@@ -195,14 +196,14 @@ def build_portable():
 
 
 def build_installer():
-    """Inno Setup?쇰줈 ?몄뒪?⑤윭 鍮뚮뱶."""
+    """Inno Setup으로 인스톨러를 빌드한다."""
     iscc = next((p for p in ISCC_CANDIDATES if os.path.isfile(p)), None)
     if not iscc:
         print("[WARN] Inno Setup(ISCC.exe)을 찾을 수 없습니다.")
         print("  https://jrsoftware.org/isinfo.php 에서 설치하세요.")
         return
 
-    # iss ?뚯씪??踰꾩쟾???꾩옱 VERSION?쇰줈 ?⑥튂
+    # iss 파일의 버전을 현재 VERSION으로 치환
     iss_path = os.path.join(ROOT, "installer.iss")
     run([iscc, f"/DMyAppVersion={VERSION}", iss_path])
     out = os.path.join(DIST_DIR, f"SeekSeek-{VERSION}-Setup.exe")

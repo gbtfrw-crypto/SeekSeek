@@ -5,8 +5,6 @@
 > NTFS MFT를 직접 파싱하여 수백만 파일을 순식간에 인덱싱하고,
 > SQLite FTS5 역색인으로 문서 내용까지 검색합니다.
 
-![SeekSeek 소개](docs/introduce.gif)
-
 ---
 
 ## 주요 기능
@@ -91,6 +89,7 @@ python main.py
 everythingthing/
 ├── main.py              # 진입점 (관리자 권한, QApplication)
 ├── config.py            # 전역 설정
+├── build.py             # PyInstaller 빌드 스크립트
 ├── requirements.txt     # Python 의존성
 │
 ├── core/                # 핵심 로직

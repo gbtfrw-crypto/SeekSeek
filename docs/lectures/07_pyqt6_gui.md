@@ -262,12 +262,12 @@ def _do_search(self):
 # ✅ 올바른 예: 워커 스레드 사용
 def _do_search(self):
     self._scanner = ScannerThread()
-    self._scanner.finished.connect(self._on_results)
+    self._scanner.finished_signal.connect(self._on_results)
     self._scanner.start()  # 별도 스레드에서 실행
 
-def _on_results(self, results):
+def _on_results(self, total, content_count):
     # 이 슬롯은 메인 스레드의 이벤트 루프에서 호출됨
-    self._model.set_results(results)
+    self._update_status(total, content_count)
 ```
 
 > **규칙**: GUI 위젯 조작은 **반드시** 메인 스레드에서만 수행한다.

@@ -147,15 +147,15 @@ flowchart TD
     H --> I[UsnChange 리스트 생성]
     I --> J[_apply_usn_changes]
     J --> K{reason 분석}
-    K -- FILE_DELETE --> L[DB+캐시에서 삭제]
-    K -- FILE_CREATE --> M[경로 해석 → DB+캐시 추가]
-    K -- DATA_CHANGE --> N[has_content=0\n재인덱싱 대기]
-    K -- RENAME --> O[구 경로 삭제\n신 경로 추가]
+    K -- FILE_DELETE --> L[mft_cache에서 삭제]
+    K -- FILE_CREATE --> M[경로 해석 → mft_cache 추가]
+    K -- DATA_CHANGE --> N[mft_cache 항목 갱신]
+    K -- RENAME --> O[구 경로 제거\n신 경로 추가]
     L --> P[new_usn 저장]
     M --> P
     N --> P
     O --> P
-    P --> Q[usn_changes_applied\n시그널 발신]
+    P --> Q[updated + paths_updated\n시그널 발신]
     Q --> R[5초 대기\n→ _poll 재호출]
 ```
 
