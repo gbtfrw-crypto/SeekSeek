@@ -280,13 +280,13 @@ ContentReindexThread.run()
     │
     ├── DB에서 has_content=0 인 파일 목록 조회 (최대 1000개 청크)
     │
-    ├── ThreadPoolExecutor (max_workers=4~12, CPU 코어 수 기반)
+    ├── ThreadPoolExecutor (max_workers=2~4, CPU 코어 수 기반)
     │   ├── [Worker 1] extract_text(file_1.pdf)
     │   ├── [Worker 2] extract_text(file_2.docx)
     │   ├── [Worker 3] extract_text(file_3.hwp)
     │   └── [Worker 4] extract_text(file_4.xlsx)
     │
-    ├── 추출 완료된 결과를 순차적으로 DB에 저장
+    ├── 추출 완료된 결과를 소배치로 즉시 DB에 저장
     │   (SQLite single writer 제약)
     │
     └── finished_signal.emit(indexed_count)
@@ -302,6 +302,17 @@ ContentReindexThread.run()
 > Python의 GIL(Global Interpreter Lock)은 CPU 바운드 작업을 제한하지만,
 > I/O 바운드 작업(파일 읽기, 라이브러리 C 확장 호출)에서는 GIL이 해제되므로
 > 멀티스레딩이 효과적이다.
+
+### 메모리 피크 완화 포인트 (v1.0.1+)
+
+- 워커 수를 `2~4`로 제한해 대용량 파일 동시 파싱 개수를 제어한다.
+- 추출 결과를 청크 전체에 모으지 않고 소배치로 즉시 flush한다.
+- `MAX_CONTENT_SIZE`는 유지하되, 동시 추출량과 누적 버퍼를 줄여 응답없음 리스크를 낮춘다.
+
+### 전체 색인/변경분 색인 실행 순서
+
+이전에는 전체 색인과 변경분 색인이 동시에 실행될 수 있었지만,
+현재는 메모리 피크 완화를 위해 **전체 색인 완료 후 변경분 색인을 직렬로 실행**한다.
 
 ---
 

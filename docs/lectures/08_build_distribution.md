@@ -192,7 +192,7 @@ flowchart TD
     C --> D[파일 메타데이터\nDB upsert]
     D --> E[ContentReindexThread\n시작]
     E --> F[has_content=0인\n파일 목록 조회]
-    F --> G[ThreadPoolExecutor\nmax_workers=4]
+    F --> G[ThreadPoolExecutor\nmax_workers=2~4]
     G --> H1[Worker 1\nextract_text PDF]
     G --> H2[Worker 2\nextract_text DOCX]
     G --> H3[Worker 3\nextract_text HWP]
