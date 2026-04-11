@@ -404,13 +404,7 @@ def bulk_upsert_contents(conn: sqlite3.Connection,
     if not content_rows:
         return 0
 
-    # 서로게이트 문자 정리
-    cleaned = [
-        (fid, text.encode("utf-8", errors="replace").decode("utf-8"))
-        for fid, text in content_rows
-    ]
-
-    file_ids = [fid for fid, _ in cleaned]
+    file_ids = [fid for fid, _ in content_rows]
 
     # 1. 기존 콘텐츠 일괄 삭제 (fc_ad 트리거 → FTS5 동기화)
     conn.executemany(
@@ -419,9 +413,13 @@ def bulk_upsert_contents(conn: sqlite3.Connection,
     )
 
     # 2. 새 콘텐츠 일괄 INSERT (fc_ai 트리거 → FTS5 동기화)
+    # 별도 cleaned 리스트를 만들지 않고 제너레이터로 즉시 정리해 메모리 복제를 피한다.
     conn.executemany(
         "INSERT INTO file_contents (file_id, content) VALUES (?,?)",
-        cleaned,
+        (
+            (fid, text.encode("utf-8", errors="replace").decode("utf-8"))
+            for fid, text in content_rows
+        ),
     )
 
     # 3. has_content 플래그 일괄 업데이트
@@ -430,8 +428,8 @@ def bulk_upsert_contents(conn: sqlite3.Connection,
         [(fid,) for fid in file_ids],
     )
 
-    logger.debug("[bulk_upsert_contents] %d개 삽입 완료", len(cleaned))
-    return len(cleaned)
+    logger.debug("[bulk_upsert_contents] %d개 삽입 완료", len(content_rows))
+    return len(content_rows)
 
 
 def get_stats(conn: sqlite3.Connection) -> dict:

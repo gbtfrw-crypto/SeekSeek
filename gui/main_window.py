@@ -221,6 +221,7 @@ class MainWindow(QMainWindow):
         self._folder_badges: dict[str, QLabel] = {}         # 폴더별 상태 배지
         self._folder_indexed_at: dict[str, float | None] = {}  # 마지막 색인 완료 시각
         self._indexing_folders: list[str] = []              # 현재 색인 중인 폴더 목록
+        self._queued_pending_paths: list[str] = []          # 전체 색인 후 이어서 처리할 변경분 경로
         self._index_total: int = 0                          # 색인 진행률 분모
 
         # ── 동시 색인 완료 카운터 ──────────────────────────────────────────────
@@ -1162,21 +1163,23 @@ class MainWindow(QMainWindow):
         self.btn_index.setEnabled(False)
 
         if full_index_folders and pending_paths:
-            self._running_index_count = 2
+            self._queued_pending_paths = pending_paths
+            self._running_index_count = 1
             self._start_index_thread(
                 '_folder_index_thread', FolderIndexThread(full_index_folders))
-            self._start_index_thread(
-                '_reindex_thread', ContentReindexThread(pending_paths))
             self.lbl_scan_status.setText("파일 수집 중…")
-            logger.info(" 전체 색인: %s / 변경분: %d개", full_index_folders, len(pending_paths))
+            logger.info(" 전체 색인 시작(변경분 %d개 대기): %s",
+                        len(pending_paths), full_index_folders)
         elif full_index_folders:
             self._running_index_count = 1
+            self._queued_pending_paths = []
             self._start_index_thread(
                 '_folder_index_thread', FolderIndexThread(full_index_folders))
             self.lbl_scan_status.setText("파일 수집 중…")
             logger.info(" 전체 색인 시작: %s", full_index_folders)
         else:
             self._running_index_count = 1
+            self._queued_pending_paths = []
             self._start_index_thread(
                 '_reindex_thread', ContentReindexThread(pending_paths))
             self.lbl_scan_status.setText("변경분 색인 중…")
@@ -1206,10 +1209,15 @@ class MainWindow(QMainWindow):
             self.lbl_scan_status.setText(f"색인 {n:,}: {os.path.basename(path)}")
 
     def _on_reindex_finished(self, count: int):
-        # 동시 실행(전체+변경분)에서는 마지막 스레드에서만 완료 후처리를 수행한다.
-        # (상태바/배지/indexed_at 갱신을 2회 실행하면 깜빡임과 잘못된 상태가 생길 수 있음)
-        if self._running_index_count > 1:
-            logger.info(" 색인 스레드 완료 대기 중… (남은 스레드: %d)", self._running_index_count - 1)
+        # 전체 색인 직후 대기 중인 변경분이 있으면 후처리를 미루고 즉시 이어서 실행한다.
+        if self._running_index_count <= 1 and self._queued_pending_paths:
+            pending = self._queued_pending_paths
+            self._queued_pending_paths = []
+            self._running_index_count = 1
+            self._start_index_thread(
+                '_reindex_thread', ContentReindexThread(pending))
+            self.lbl_scan_status.setText("변경분 색인 중…")
+            logger.info(" 전체 색인 완료 후 변경분 색인 시작: %d개 파일", len(pending))
             return
 
         self.lbl_scan_status.setText(f"본문 검색 색인 완료: {count:,}개 파일")

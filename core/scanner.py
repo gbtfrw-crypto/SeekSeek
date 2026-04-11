@@ -55,6 +55,8 @@ logger = logging.getLogger(__name__)
 
 # 배치 처리 크기. SQLite 변수 바인딩 제한(999) 이하로 유지.
 _BATCH_SIZE = 999
+# 추출 결과를 소량 단위로 DB에 즉시 반영하여 텍스트 누적 메모리를 제한.
+_RESULT_FLUSH_SIZE = 32
 
 
 # ── 제외 경로 로딩 헬퍼 ───────────────────────────────────────────────────────
@@ -639,9 +641,22 @@ class ContentReindexThread(QThread):
         indexed   = 0
         processed = 0
         cpu = os.cpu_count() or 4
-        max_workers = max(4, min(cpu, 12))
+        max_workers = max(2, min(cpu, 4))
 
         logger.info("[reindex] 시작: 전체 %d개, workers=%d", len(paths), max_workers)
+
+        def _flush_results(conn, rows: list[tuple[str, str | None]]) -> int:
+            if not rows:
+                return 0
+            path_to_id = bulk_upsert_files(conn, [p for p, _ in rows])
+            content_rows = [
+                (path_to_id[p], t)
+                for p, t in rows
+                if t and p in path_to_id
+            ]
+            cnt = bulk_upsert_contents(conn, content_rows)
+            rows.clear()
+            return cnt
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             for chunk_start in range(0, len(paths), _BATCH_SIZE):
@@ -682,40 +697,30 @@ class ContentReindexThread(QThread):
                     processed += len(chunk)
                     continue
 
-                # ── 2단계: 병렬 텍스트 추출 ──────────────────────────────────
-                results: list[tuple[str, str | None]] = []
-                try:
-                    future_map = {pool.submit(_extract_for_path, p): p
-                                  for p in needs_extract}
-                    for i, fut in enumerate(as_completed(future_map)):
-                        path = future_map[fut]
-                        self.progress.emit(path, processed + i + 1)
-                        try:
-                            text = fut.result()
-                        except Exception:
-                            text = None
-                        results.append((path, text))
-                except Exception:
-                    logger.exception("[reindex] 추출 단계 예외 (chunk %d)", chunk_start)
-
-                # ── 3단계: 벌크 DB 쓰기 ──────────────────────────────────────
+                # ── 2단계+3단계: 병렬 텍스트 추출 + 소배치 즉시 DB 반영 ─────────
                 try:
                     with get_connection() as conn:
-                        # files 테이블 upsert → path→id 맵 획득
-                        path_to_id = bulk_upsert_files(
-                            conn, [p for p, _ in results]
-                        )
-                        # 텍스트가 있는 파일만 file_contents에 삽입
-                        content_rows = [
-                            (path_to_id[p], t)
-                            for p, t in results
-                            if t and p in path_to_id
-                        ]
-                        cnt = bulk_upsert_contents(conn, content_rows)
-                        conn.commit()
+                        results_buffer: list[tuple[str, str | None]] = []
+                        future_map = {pool.submit(_extract_for_path, p): p
+                                      for p in needs_extract}
+                        for i, fut in enumerate(as_completed(future_map)):
+                            path = future_map[fut]
+                            self.progress.emit(path, processed + i + 1)
+                            try:
+                                text = fut.result()
+                            except Exception:
+                                text = None
+                            results_buffer.append((path, text))
+
+                            if len(results_buffer) >= _RESULT_FLUSH_SIZE:
+                                cnt = _flush_results(conn, results_buffer)
+                                indexed += cnt
+                                conn.commit()
+
+                        cnt = _flush_results(conn, results_buffer)
                         indexed += cnt
-                        logger.info("[reindex] 청크 commit: 이번 %d개, 누적 %d개",
-                                    cnt, indexed)
+                        conn.commit()
+                        logger.info("[reindex] 청크 commit: 누적 %d개", indexed)
                 except Exception:
                     logger.exception("[reindex] DB 쓰기 예외 (chunk %d)", chunk_start)
 
